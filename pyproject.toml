@@ -8,3 +8,17 @@ dependencies = [
     "fastmcp>=2.14.2",
     "httpx>=0.28.0",
 ]
+
+[dependency-groups]
+dev = [
+    "prek>=0.2.0",
+]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ty.environment]
+python = ".venv"

@@ -1,0 +1,12 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://foundry.fsky.io/vel/ty-pre-commit
+    rev: 0.0.8
+    hooks:
+      - id: ty-check
