@@ -12,11 +12,11 @@ delegate = delegate_tool.fn
 
 
 class TestGetApiKey:
-    def test_returns_api_key_when_set(self, monkeypatch):
+    def test_returns_api_key_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("DEVIN_API_KEY", "apk_test123")
         assert get_api_key() == "apk_test123"
 
-    def test_raises_when_not_set(self, monkeypatch):
+    def test_raises_when_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("DEVIN_API_KEY", raising=False)
         with pytest.raises(ToolError, match="DEVIN_API_KEY"):
             get_api_key()
@@ -24,23 +24,25 @@ class TestGetApiKey:
 
 class TestDelegate:
     @pytest.fixture
-    def mock_progress(self):
+    def mock_progress(self) -> AsyncMock:
         progress = AsyncMock()
         progress.set_message = AsyncMock()
         return progress
 
     @pytest.fixture(autouse=True)
-    def set_api_key(self, monkeypatch):
+    def set_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("DEVIN_API_KEY", "apk_test123")
 
     @pytest.fixture(autouse=True)
-    def fast_polling(self, monkeypatch):
+    def fast_polling(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Set poll interval to 0 for faster tests."""
         monkeypatch.setattr("main.POLL_INTERVAL_SECONDS", 0)
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_creates_session_and_monitors_to_completion(self, mock_progress):
+    async def test_creates_session_and_monitors_to_completion(
+        self, mock_progress: AsyncMock
+    ) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200,
             json={
@@ -63,7 +65,9 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_creates_session_with_all_optional_params(self, mock_progress):
+    async def test_creates_session_with_all_optional_params(
+        self, mock_progress: AsyncMock
+    ) -> None:
         create_route = respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
         )
@@ -104,7 +108,7 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_monitors_until_blocked(self, mock_progress):
+    async def test_monitors_until_blocked(self, mock_progress: AsyncMock) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
         )
@@ -120,7 +124,7 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_monitors_until_expired(self, mock_progress):
+    async def test_monitors_until_expired(self, mock_progress: AsyncMock) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
         )
@@ -136,7 +140,7 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_reports_status_changes(self, mock_progress):
+    async def test_reports_status_changes(self, mock_progress: AsyncMock) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
         )
@@ -181,7 +185,7 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_reports_new_messages(self, mock_progress):
+    async def test_reports_new_messages(self, mock_progress: AsyncMock) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
         )
@@ -216,7 +220,7 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_truncates_long_messages(self, mock_progress):
+    async def test_truncates_long_messages(self, mock_progress: AsyncMock) -> None:
         long_message = "A" * 300
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
@@ -239,7 +243,7 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_create_401_raises_tool_error(self, mock_progress):
+    async def test_create_401_raises_tool_error(self, mock_progress: AsyncMock) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             401, json={"error": "Unauthorized"}
         )
@@ -249,7 +253,7 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_create_422_raises_tool_error(self, mock_progress):
+    async def test_create_422_raises_tool_error(self, mock_progress: AsyncMock) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             422, json={"detail": "Validation failed"}
         )
@@ -259,7 +263,7 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_create_500_raises_tool_error(self, mock_progress):
+    async def test_create_500_raises_tool_error(self, mock_progress: AsyncMock) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             500, text="Internal Server Error"
         )
@@ -269,7 +273,9 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_monitor_404_raises_tool_error(self, mock_progress):
+    async def test_monitor_404_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
         )
@@ -282,7 +288,9 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_monitor_401_raises_tool_error(self, mock_progress):
+    async def test_monitor_401_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
         )
@@ -295,7 +303,9 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_monitor_500_raises_tool_error(self, mock_progress):
+    async def test_monitor_500_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
             200, json={"session_id": "sess_123", "url": "..."}
         )
@@ -308,7 +318,9 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_api_key_missing_raises_tool_error(self, monkeypatch, mock_progress):
+    async def test_api_key_missing_raises_tool_error(
+        self, monkeypatch: pytest.MonkeyPatch, mock_progress: AsyncMock
+    ) -> None:
         monkeypatch.delenv("DEVIN_API_KEY", raising=False)
 
         with pytest.raises(ToolError, match="DEVIN_API_KEY"):
