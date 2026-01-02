@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock
+import runpy
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import respx
@@ -325,3 +326,10 @@ class TestDelegate:
 
         with pytest.raises(ToolError, match="DEVIN_API_KEY"):
             await delegate("Test prompt", progress=mock_progress)
+
+
+class TestMain:
+    def test_main_runs_mcp_server(self) -> None:
+        with patch("fastmcp.FastMCP.run") as mock_run:
+            runpy.run_module("main", run_name="__main__", alter_sys=True)
+            mock_run.assert_called_once()
