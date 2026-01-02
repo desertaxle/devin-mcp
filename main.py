@@ -151,5 +151,9 @@ async def delegate(
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
-if __name__ == "__main__":
+def main() -> None:
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()
