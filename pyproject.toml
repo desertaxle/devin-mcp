@@ -1,7 +1,7 @@
 [project]
 name = "devin-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP server for delegating tasks to Devin AI"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -15,6 +15,8 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "respx>=0.22.0",
+    "ruff>=0.14.10",
+    "ty>=0.0.8",
 ]
 
 [tool.ruff]
