@@ -5,7 +5,7 @@ import pytest
 import respx
 from fastmcp.exceptions import ToolError
 
-from main import DEVIN_API_BASE, get_api_key
+from main import DEVIN_API_BASE, MAX_POLL_RETRIES, exponential_backoff, get_api_key
 from main import delegate as delegate_tool
 
 # Access the underlying function from the FastMCP tool wrapper
@@ -23,6 +23,20 @@ class TestGetApiKey:
             get_api_key()
 
 
+class TestExponentialBackoff:
+    def test_returns_exponential_values_capped_at_60(self) -> None:
+        class MockState:
+            def __init__(self, attempt: int) -> None:
+                self.attempt = attempt
+
+        # 2^1 = 2, 2^2 = 4, 2^3 = 8, 2^6 = 64 -> capped to 60
+        assert exponential_backoff(None, MockState(1)) == 2
+        assert exponential_backoff(None, MockState(2)) == 4
+        assert exponential_backoff(None, MockState(3)) == 8
+        assert exponential_backoff(None, MockState(6)) == 60  # capped
+        assert exponential_backoff(None, MockState(10)) == 60  # capped
+
+
 class TestDelegate:
     @pytest.fixture
     def mock_progress(self) -> AsyncMock:
@@ -38,6 +52,11 @@ class TestDelegate:
     def fast_polling(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Set poll interval to 0 for faster tests."""
         monkeypatch.setattr("main.POLL_INTERVAL_SECONDS", 0)
+
+    @pytest.fixture(autouse=True)
+    def fast_retry_backoff(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Set retry backoff to instant for faster tests."""
+        monkeypatch.setattr("main.exponential_backoff", lambda prev, next: 0)
 
     @respx.mock
     @pytest.mark.asyncio
@@ -304,18 +323,109 @@ class TestDelegate:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_monitor_500_raises_tool_error(
+    async def test_monitor_500_retries_exhausted_returns_session_info(
         self, mock_progress: AsyncMock
     ) -> None:
+        """After retries exhausted on 500, return session info."""
         respx.post(f"{DEVIN_API_BASE}/sessions").respond(
-            200, json={"session_id": "sess_123", "url": "..."}
+            200, json={"session_id": "sess_123", "url": "https://app.devin.ai/sess_123"}
         )
+        # Return 500 for all retry attempts
         respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
             500, text="Internal Server Error"
         )
 
-        with pytest.raises(ToolError, match="Devin API error.*500"):
-            await delegate("Test prompt", progress=mock_progress)
+        result = await delegate("Test prompt", progress=mock_progress)
+
+        assert result["status"] == "monitoring_failed"
+        assert result["session_id"] == "sess_123"
+        assert result["url"] == "https://app.devin.ai/sess_123"
+        assert f"after {MAX_POLL_RETRIES} retries" in result["error"]
+        assert "created successfully" in result["message"]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_poll_retries_on_500_then_succeeds(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        """500 errors should retry and succeed if subsequent attempt works."""
+        respx.post(f"{DEVIN_API_BASE}/sessions").respond(
+            200, json={"session_id": "sess_123", "url": "https://app.devin.ai/sess_123"}
+        )
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").mock(
+            side_effect=[
+                respx.MockResponse(500, text="Internal Server Error"),
+                respx.MockResponse(500, text="Internal Server Error"),
+                respx.MockResponse(
+                    200,
+                    json={
+                        "session_id": "sess_123",
+                        "status_enum": "finished",
+                        "messages": [],
+                    },
+                ),
+            ]
+        )
+
+        result = await delegate("Test prompt", progress=mock_progress)
+
+        assert result["status_enum"] == "finished"
+        mock_progress.set_message.assert_any_call(
+            "Polling error (HTTP 500), retrying..."
+        )
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_poll_502_503_504_are_retryable(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        """502, 503, 504 errors should also be retryable."""
+        respx.post(f"{DEVIN_API_BASE}/sessions").respond(
+            200, json={"session_id": "sess_123", "url": "https://app.devin.ai/sess_123"}
+        )
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").mock(
+            side_effect=[
+                respx.MockResponse(502, text="Bad Gateway"),
+                respx.MockResponse(503, text="Service Unavailable"),
+                respx.MockResponse(
+                    200,
+                    json={
+                        "session_id": "sess_123",
+                        "status_enum": "finished",
+                        "messages": [],
+                    },
+                ),
+            ]
+        )
+
+        result = await delegate("Test prompt", progress=mock_progress)
+
+        assert result["status_enum"] == "finished"
+        mock_progress.set_message.assert_any_call(
+            "Polling error (HTTP 502), retrying..."
+        )
+        mock_progress.set_message.assert_any_call(
+            "Polling error (HTTP 503), retrying..."
+        )
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_poll_unexpected_status_returns_session_info(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        """Non-retryable, non-error status codes should return session info."""
+        respx.post(f"{DEVIN_API_BASE}/sessions").respond(
+            200, json={"session_id": "sess_123", "url": "https://app.devin.ai/sess_123"}
+        )
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
+            418, text="I'm a teapot"
+        )
+
+        result = await delegate("Test prompt", progress=mock_progress)
+
+        assert result["status"] == "monitoring_failed"
+        assert result["session_id"] == "sess_123"
+        assert "418" in result["error"]
 
     @respx.mock
     @pytest.mark.asyncio
