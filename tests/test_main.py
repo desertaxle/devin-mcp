@@ -7,9 +7,15 @@ from fastmcp.exceptions import ToolError
 
 from main import DEVIN_API_BASE, MAX_POLL_RETRIES, exponential_backoff, get_api_key
 from main import delegate as delegate_tool
+from main import get_session as get_session_tool
+from main import list_sessions as list_sessions_tool
+from main import resume_session as resume_session_tool
 
-# Access the underlying function from the FastMCP tool wrapper
+# Access the underlying functions from the FastMCP tool wrappers
 delegate = delegate_tool.fn
+get_session = get_session_tool.fn
+list_sessions = list_sessions_tool.fn
+resume_session = resume_session_tool.fn
 
 
 class TestGetApiKey:
@@ -436,6 +442,400 @@ class TestDelegate:
 
         with pytest.raises(ToolError, match="DEVIN_API_KEY"):
             await delegate("Test prompt", progress=mock_progress)
+
+
+class TestGetSession:
+    @pytest.fixture(autouse=True)
+    def set_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DEVIN_API_KEY", "apk_test123")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_returns_session_details(self) -> None:
+        session_data = {
+            "session_id": "sess_456",
+            "status_enum": "working",
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T01:00:00Z",
+            "messages": [{"type": "user_message", "message": "Hello"}],
+            "title": "My session",
+            "tags": ["test"],
+        }
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_456").respond(200, json=session_data)
+
+        result = await get_session("sess_456")
+
+        assert result["session_id"] == "sess_456"
+        assert result["status_enum"] == "working"
+        assert result["title"] == "My session"
+        assert len(result["messages"]) == 1
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_401_raises_tool_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_456").respond(
+            401, json={"error": "Unauthorized"}
+        )
+
+        with pytest.raises(ToolError, match="Invalid API key"):
+            await get_session("sess_456")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_404_raises_tool_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_456").respond(
+            404, json={"error": "Not found"}
+        )
+
+        with pytest.raises(ToolError, match="not found"):
+            await get_session("sess_456")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_500_raises_tool_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_456").respond(
+            500, text="Internal Server Error"
+        )
+
+        with pytest.raises(ToolError, match="Devin API error.*500"):
+            await get_session("sess_456")
+
+    @pytest.mark.asyncio
+    async def test_api_key_missing_raises_tool_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+
+        with pytest.raises(ToolError, match="DEVIN_API_KEY"):
+            await get_session("sess_456")
+
+
+class TestListSessions:
+    @pytest.fixture(autouse=True)
+    def set_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DEVIN_API_KEY", "apk_test123")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_returns_sessions_list(self) -> None:
+        response_data = {
+            "sessions": [
+                {
+                    "session_id": "sess_1",
+                    "status": "running",
+                    "status_enum": "working",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "updated_at": "2025-01-01T01:00:00Z",
+                },
+                {
+                    "session_id": "sess_2",
+                    "status": "completed",
+                    "status_enum": "finished",
+                    "created_at": "2025-01-02T00:00:00Z",
+                    "updated_at": "2025-01-02T01:00:00Z",
+                },
+            ]
+        }
+        respx.get(f"{DEVIN_API_BASE}/sessions").respond(200, json=response_data)
+
+        result = await list_sessions()
+
+        assert len(result["sessions"]) == 2
+        assert result["sessions"][0]["session_id"] == "sess_1"
+        assert result["sessions"][1]["session_id"] == "sess_2"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_passes_query_params(self) -> None:
+        route = respx.get(f"{DEVIN_API_BASE}/sessions").respond(
+            200, json={"sessions": []}
+        )
+
+        await list_sessions(limit=10, offset=5, tags=["ci"], user_email="a@b.com")
+
+        request = route.calls[0].request
+        assert "limit=10" in str(request.url)
+        assert "offset=5" in str(request.url)
+        assert "tags=ci" in str(request.url)
+        assert "user_email=a%40b.com" in str(request.url)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_omits_none_params(self) -> None:
+        route = respx.get(f"{DEVIN_API_BASE}/sessions").respond(
+            200, json={"sessions": []}
+        )
+
+        await list_sessions()
+
+        request = route.calls[0].request
+        assert "tags" not in str(request.url)
+        assert "user_email" not in str(request.url)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_401_raises_tool_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions").respond(
+            401, json={"error": "Unauthorized"}
+        )
+
+        with pytest.raises(ToolError, match="Invalid API key"):
+            await list_sessions()
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_500_raises_tool_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions").respond(
+            500, text="Internal Server Error"
+        )
+
+        with pytest.raises(ToolError, match="Devin API error.*500"):
+            await list_sessions()
+
+    @pytest.mark.asyncio
+    async def test_api_key_missing_raises_tool_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+
+        with pytest.raises(ToolError, match="DEVIN_API_KEY"):
+            await list_sessions()
+
+
+class TestResumeSession:
+    @pytest.fixture
+    def mock_progress(self) -> AsyncMock:
+        progress = AsyncMock()
+        progress.set_message = AsyncMock()
+        return progress
+
+    @pytest.fixture(autouse=True)
+    def set_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DEVIN_API_KEY", "apk_test123")
+
+    @pytest.fixture(autouse=True)
+    def fast_polling(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("main.POLL_INTERVAL_SECONDS", 0)
+
+    @pytest.fixture(autouse=True)
+    def fast_retry_backoff(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("main.exponential_backoff", lambda prev, next: 0)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_sends_message_and_monitors_to_completion(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").mock(
+            side_effect=[
+                # First call: status check
+                respx.MockResponse(
+                    200,
+                    json={
+                        "session_id": "sess_123",
+                        "status_enum": "suspended",
+                        "url": "https://app.devin.ai/sessions/sess_123",
+                    },
+                ),
+                # Second call: monitoring poll
+                respx.MockResponse(
+                    200,
+                    json={
+                        "session_id": "sess_123",
+                        "status_enum": "finished",
+                        "messages": [],
+                    },
+                ),
+            ]
+        )
+        respx.post(f"{DEVIN_API_BASE}/sessions/sess_123/message").respond(
+            200, json=None
+        )
+
+        result = await resume_session(
+            "sess_123", "Continue working", progress=mock_progress
+        )
+
+        assert result["status_enum"] == "finished"
+        mock_progress.set_message.assert_any_call("Checking session sess_123...")
+        mock_progress.set_message.assert_any_call("Sending message...")
+        mock_progress.set_message.assert_any_call("Message sent. Monitoring session...")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_resumes_working_session(self, mock_progress: AsyncMock) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").mock(
+            side_effect=[
+                respx.MockResponse(
+                    200,
+                    json={
+                        "session_id": "sess_123",
+                        "status_enum": "working",
+                        "url": "https://app.devin.ai/sessions/sess_123",
+                    },
+                ),
+                respx.MockResponse(
+                    200,
+                    json={
+                        "session_id": "sess_123",
+                        "status_enum": "finished",
+                        "messages": [],
+                    },
+                ),
+            ]
+        )
+        respx.post(f"{DEVIN_API_BASE}/sessions/sess_123/message").respond(
+            200, json=None
+        )
+
+        result = await resume_session("sess_123", "Keep going", progress=mock_progress)
+
+        assert result["status_enum"] == "finished"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_rejects_terminal_state_session(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
+            200,
+            json={
+                "session_id": "sess_123",
+                "status_enum": "finished",
+            },
+        )
+
+        with pytest.raises(ToolError, match="terminal state"):
+            await resume_session("sess_123", "Continue", progress=mock_progress)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_status_check_404_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
+            404, json={"error": "Not found"}
+        )
+
+        with pytest.raises(ToolError, match="not found"):
+            await resume_session("sess_123", "Continue", progress=mock_progress)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_status_check_401_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
+            401, json={"error": "Unauthorized"}
+        )
+
+        with pytest.raises(ToolError, match="Invalid API key"):
+            await resume_session("sess_123", "Continue", progress=mock_progress)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_status_check_500_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
+            500, text="Internal Server Error"
+        )
+
+        with pytest.raises(ToolError, match="Devin API error.*500"):
+            await resume_session("sess_123", "Continue", progress=mock_progress)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_send_message_401_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
+            200,
+            json={"session_id": "sess_123", "status_enum": "working"},
+        )
+        respx.post(f"{DEVIN_API_BASE}/sessions/sess_123/message").respond(
+            401, json={"error": "Unauthorized"}
+        )
+
+        with pytest.raises(ToolError, match="Invalid API key"):
+            await resume_session("sess_123", "Continue", progress=mock_progress)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_send_message_404_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
+            200,
+            json={"session_id": "sess_123", "status_enum": "working"},
+        )
+        respx.post(f"{DEVIN_API_BASE}/sessions/sess_123/message").respond(
+            404, json={"error": "Not found"}
+        )
+
+        with pytest.raises(ToolError, match="not found"):
+            await resume_session("sess_123", "Continue", progress=mock_progress)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_send_message_500_raises_tool_error(
+        self, mock_progress: AsyncMock
+    ) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").respond(
+            200,
+            json={"session_id": "sess_123", "status_enum": "working"},
+        )
+        respx.post(f"{DEVIN_API_BASE}/sessions/sess_123/message").respond(
+            500, text="Internal Server Error"
+        )
+
+        with pytest.raises(ToolError, match="Failed to send message.*500"):
+            await resume_session("sess_123", "Continue", progress=mock_progress)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_sends_correct_message_body(self, mock_progress: AsyncMock) -> None:
+        respx.get(f"{DEVIN_API_BASE}/sessions/sess_123").mock(
+            side_effect=[
+                respx.MockResponse(
+                    200,
+                    json={
+                        "session_id": "sess_123",
+                        "status_enum": "working",
+                        "url": "https://app.devin.ai/sessions/sess_123",
+                    },
+                ),
+                respx.MockResponse(
+                    200,
+                    json={
+                        "session_id": "sess_123",
+                        "status_enum": "finished",
+                        "messages": [],
+                    },
+                ),
+            ]
+        )
+        msg_route = respx.post(f"{DEVIN_API_BASE}/sessions/sess_123/message").respond(
+            200, json=None
+        )
+
+        await resume_session(
+            "sess_123", "Please continue with the task", progress=mock_progress
+        )
+
+        import json
+
+        body = json.loads(msg_route.calls[0].request.content)
+        assert body["message"] == "Please continue with the task"
+
+    @pytest.mark.asyncio
+    async def test_api_key_missing_raises_tool_error(
+        self, monkeypatch: pytest.MonkeyPatch, mock_progress: AsyncMock
+    ) -> None:
+        monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+
+        with pytest.raises(ToolError, match="DEVIN_API_KEY"):
+            await resume_session("sess_123", "Continue", progress=mock_progress)
 
 
 class TestMain:

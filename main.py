@@ -12,6 +12,7 @@ from mule.stop_conditions import AttemptsExhausted, NoException
 DEVIN_API_BASE = "https://api.devin.ai/v1"
 POLL_INTERVAL_SECONDS = 10
 TERMINAL_STATES = {"finished", "blocked", "expired"}
+SLEEPING_STATES = {"suspended", "sleeping", "suspend_requested"}
 MAX_POLL_RETRIES = 3
 MONITORING_FAILED_MESSAGE = (
     "Session was created successfully. Check Devin dashboard for status."
@@ -303,6 +304,165 @@ async def delegate(
         session_url = create_result.get("url")
 
         await progress.set_message(f"Session created: {session_id}")
+
+        return await _monitor_session(
+            client, session_id, session_url, api_key, progress
+        )
+
+
+@mcp.tool()
+async def get_session(session_id: str) -> dict[str, Any]:
+    """Retrieve details about an existing Devin session.
+
+    Use this to inspect the current status, messages, and metadata of a session.
+    This is useful for checking whether a session is still running, has finished,
+    or has gone to sleep due to ACU limits.
+
+    Args:
+        session_id: The identifier of the session to retrieve.
+
+    Returns:
+        Session details including status_enum, messages, title, tags, and metadata.
+        The status_enum field indicates the session state: working, blocked, expired,
+        finished, suspend_requested, resume_requested, or resumed.
+    """
+    api_key = get_api_key()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DEVIN_API_BASE}/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+        if response.status_code == 401:
+            raise ToolError("Invalid API key. Please check your DEVIN_API_KEY.")
+        elif response.status_code == 404:
+            raise ToolError(f"Session '{session_id}' not found.")
+        elif response.status_code != 200:
+            raise ToolError(
+                f"Devin API error (status {response.status_code}): {response.text}"
+            )
+
+        return response.json()
+
+
+@mcp.tool()
+async def list_sessions(
+    limit: int = 100,
+    offset: int = 0,
+    tags: list[str] | None = None,
+    user_email: str | None = None,
+) -> dict[str, Any]:
+    """List Devin sessions with optional filtering.
+
+    Use this to find sessions by tags or email, or to get an overview of recent
+    sessions. Useful for finding session IDs to inspect or resume.
+
+    Args:
+        limit: Maximum number of sessions to return (default 100).
+        offset: Pagination offset (default 0).
+        tags: Filter sessions by these tags.
+        user_email: Filter sessions by the creator's email address.
+
+    Returns:
+        A dict with a 'sessions' key containing a list of session summaries,
+        each with session_id, status_enum, title, tags, and other metadata.
+    """
+    api_key = get_api_key()
+
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if tags is not None:
+        params["tags"] = tags
+    if user_email is not None:
+        params["user_email"] = user_email
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DEVIN_API_BASE}/sessions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            params=params,
+        )
+
+        if response.status_code == 401:
+            raise ToolError("Invalid API key. Please check your DEVIN_API_KEY.")
+        elif response.status_code != 200:
+            raise ToolError(
+                f"Devin API error (status {response.status_code}): {response.text}"
+            )
+
+        return response.json()
+
+
+@mcp.tool(task=True)
+async def resume_session(
+    session_id: str,
+    message: str,
+    progress: Progress = Progress(),
+) -> dict[str, Any]:
+    """Send a message to a Devin session and monitor it until completion.
+
+    Use this to resume a session that has gone to sleep (e.g. due to ACU limits)
+    or to send follow-up instructions to a running session. Sending a message to
+    a sleeping session will wake it up. After sending the message, the session is
+    monitored until it reaches a terminal state.
+
+    Args:
+        session_id: The identifier of the session to message.
+        message: The message to send (e.g. instructions to continue work).
+        progress: FastMCP Progress dependency for reporting status updates.
+
+    Returns:
+        Final session details including status, messages, and metadata.
+    """
+    api_key = get_api_key()
+
+    async with httpx.AsyncClient() as client:
+        # First, check current session status
+        await progress.set_message(f"Checking session {session_id}...")
+        status_response = await client.get(
+            f"{DEVIN_API_BASE}/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+        if status_response.status_code == 401:
+            raise ToolError("Invalid API key. Please check your DEVIN_API_KEY.")
+        elif status_response.status_code == 404:
+            raise ToolError(f"Session '{session_id}' not found.")
+        elif status_response.status_code != 200:
+            raise ToolError(
+                f"Devin API error (status {status_response.status_code}): "
+                f"{status_response.text}"
+            )
+
+        session_data = status_response.json()
+        current_status = session_data.get("status_enum", "unknown")
+
+        if current_status in TERMINAL_STATES:
+            raise ToolError(
+                f"Session '{session_id}' is in terminal state '{current_status}' "
+                f"and cannot receive messages."
+            )
+
+        # Send the message
+        await progress.set_message("Sending message...")
+        msg_response = await client.post(
+            f"{DEVIN_API_BASE}/sessions/{session_id}/message",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"message": message},
+        )
+
+        if msg_response.status_code == 401:
+            raise ToolError("Invalid API key. Please check your DEVIN_API_KEY.")
+        elif msg_response.status_code == 404:
+            raise ToolError(f"Session '{session_id}' not found.")
+        elif msg_response.status_code != 200:
+            raise ToolError(
+                f"Failed to send message (status {msg_response.status_code}): "
+                f"{msg_response.text}"
+            )
+
+        session_url = session_data.get("url")
+        await progress.set_message("Message sent. Monitoring session...")
 
         return await _monitor_session(
             client, session_id, session_url, api_key, progress
