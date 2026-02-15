@@ -8,10 +8,20 @@ MCP server for delegating tasks to Devin AI.
   - Runs as a background task
   - Reports progress updates (status changes, messages)
   - Supports all Devin session options (snapshots, playbooks, tags, etc.)
+- **get_session** - Retrieve details about an existing session
+  - Check status, messages, and metadata
+  - Useful for inspecting whether a session is running, finished, or sleeping
+- **list_sessions** - List sessions with optional filtering
+  - Filter by tags or creator email
+  - Paginated results for finding session IDs to inspect or resume
+- **resume_session** - Send a message to a session and monitor it until completion
+  - Wakes up sessions that have gone to sleep (e.g. due to ACU limits)
+  - Send follow-up instructions to running sessions
+  - Runs as a background task with progress reporting
 
 ## Requirements
 
-- Python 3.14+
+- Python 3.13+
 - Devin API key (starts with `apk_`)
 
 ## Usage
