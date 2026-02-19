@@ -9,7 +9,7 @@ description = "MCP server for delegating tasks to Devin AI"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "fastmcp>=2.14.2",
+    "fastmcp[tasks]>=3",
     "httpx>=0.28.0",
     "mule-lib>=0.1.0",
 ]
@@ -39,6 +39,14 @@ select = ["E", "F", "I", "UP"]
 
 [tool.ty.environment]
 python = ".venv"
+
+# FastMCP v3's @mcp.tool() decorator is typed as returning FunctionTool,
+# but at runtime returns the original function. Suppress the false positive.
+[[tool.ty.overrides]]
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+call-non-callable = "ignore"
 
 [tool.pytest.ini_options]
 addopts = "--cov=main --cov-report=term-missing --cov-fail-under=100"

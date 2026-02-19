@@ -5,17 +5,16 @@ import pytest
 import respx
 from fastmcp.exceptions import ToolError
 
-from main import DEVIN_API_BASE, MAX_POLL_RETRIES, exponential_backoff, get_api_key
-from main import delegate as delegate_tool
-from main import get_session as get_session_tool
-from main import list_sessions as list_sessions_tool
-from main import resume_session as resume_session_tool
-
-# Access the underlying functions from the FastMCP tool wrappers
-delegate = delegate_tool.fn
-get_session = get_session_tool.fn
-list_sessions = list_sessions_tool.fn
-resume_session = resume_session_tool.fn
+from main import (
+    DEVIN_API_BASE,
+    MAX_POLL_RETRIES,
+    delegate,
+    exponential_backoff,
+    get_api_key,
+    get_session,
+    list_sessions,
+    resume_session,
+)
 
 
 class TestGetApiKey:
