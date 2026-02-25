@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 from typing import Any
 
@@ -34,17 +33,12 @@ API_KEY_ERROR_MESSAGE = (
 )
 
 
-def get_api_key() -> str:
+def get_api_key(
+    error_class: type[Exception] = ToolError,
+) -> str:
     api_key = os.environ.get("DEVIN_API_KEY")
     if not api_key:
-        raise ToolError(API_KEY_ERROR_MESSAGE)
-    return api_key
-
-
-def _get_api_key_for_resource() -> str:
-    api_key = os.environ.get("DEVIN_API_KEY")
-    if not api_key:
-        raise ResourceError(API_KEY_ERROR_MESSAGE)
+        raise error_class(API_KEY_ERROR_MESSAGE)
     return api_key
 
 
@@ -487,7 +481,7 @@ async def list_playbooks() -> str:
     Returns a JSON array of playbook objects, each containing:
     playbook_id, title, body, status, and metadata fields.
     """
-    api_key = _get_api_key_for_resource()
+    api_key = get_api_key(ResourceError)
 
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -502,7 +496,7 @@ async def list_playbooks() -> str:
                 f"Devin API error (status {response.status_code}): {response.text}"
             )
 
-        return json.dumps(response.json())
+        return response.text
 
 
 @mcp.resource("playbook://{playbook_id}", mime_type="application/json")
@@ -512,7 +506,7 @@ async def get_playbook(playbook_id: str) -> str:
     Returns a JSON object with the playbook details including:
     playbook_id, title, body, status, and metadata fields.
     """
-    api_key = _get_api_key_for_resource()
+    api_key = get_api_key(ResourceError)
 
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -529,7 +523,7 @@ async def get_playbook(playbook_id: str) -> str:
                 f"Devin API error (status {response.status_code}): {response.text}"
             )
 
-        return json.dumps(response.json())
+        return response.text
 
 
 def main() -> None:

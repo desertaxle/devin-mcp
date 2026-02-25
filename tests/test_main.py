@@ -29,6 +29,11 @@ class TestGetApiKey:
         with pytest.raises(ToolError, match="DEVIN_API_KEY"):
             get_api_key()
 
+    def test_raises_custom_error_class(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+        with pytest.raises(ResourceError, match="DEVIN_API_KEY"):
+            get_api_key(ResourceError)
+
 
 class TestExponentialBackoff:
     def test_returns_exponential_values_capped_at_60(self) -> None:
