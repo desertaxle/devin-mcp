@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 from fastmcp import FastMCP
 from fastmcp.dependencies import Progress
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ResourceError, ToolError
 from mule import retry
 from mule.stop_conditions import AttemptsExhausted, NoException
 
@@ -27,13 +27,18 @@ def exponential_backoff(prev_state: Any, next_state: Any) -> int:
 mcp = FastMCP("Devin Session Server")
 
 
-def get_api_key() -> str:
+API_KEY_ERROR_MESSAGE = (
+    "DEVIN_API_KEY environment variable is not set. "
+    "Please set it to your Devin API key (starts with 'apk_')."
+)
+
+
+def get_api_key(
+    error_class: type[Exception] = ToolError,
+) -> str:
     api_key = os.environ.get("DEVIN_API_KEY")
     if not api_key:
-        raise ToolError(
-            "DEVIN_API_KEY environment variable is not set. "
-            "Please set it to your Devin API key (starts with 'apk_')."
-        )
+        raise error_class(API_KEY_ERROR_MESSAGE)
     return api_key
 
 
@@ -467,6 +472,58 @@ async def resume_session(
         return await _monitor_session(
             client, session_id, session_url, api_key, progress
         )
+
+
+@mcp.resource("playbook://list", mime_type="application/json")
+async def list_playbooks() -> str:
+    """List all available Devin playbooks.
+
+    Returns a JSON array of playbook objects, each containing:
+    playbook_id, title, body, status, and metadata fields.
+    """
+    api_key = get_api_key(ResourceError)
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DEVIN_API_BASE}/playbooks",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+        if response.status_code == 401:
+            raise ResourceError("Invalid API key. Please check your DEVIN_API_KEY.")
+        elif response.status_code != 200:
+            raise ResourceError(
+                f"Devin API error (status {response.status_code}): {response.text}"
+            )
+
+        return response.text
+
+
+@mcp.resource("playbook://{playbook_id}", mime_type="application/json")
+async def get_playbook(playbook_id: str) -> str:
+    """Read a specific Devin playbook by ID.
+
+    Returns a JSON object with the playbook details including:
+    playbook_id, title, body, status, and metadata fields.
+    """
+    api_key = get_api_key(ResourceError)
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DEVIN_API_BASE}/playbooks/{playbook_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+        if response.status_code == 401:
+            raise ResourceError("Invalid API key. Please check your DEVIN_API_KEY.")
+        elif response.status_code == 404:
+            raise ResourceError(f"Playbook '{playbook_id}' not found.")
+        elif response.status_code != 200:
+            raise ResourceError(
+                f"Devin API error (status {response.status_code}): {response.text}"
+            )
+
+        return response.text
 
 
 def main() -> None:

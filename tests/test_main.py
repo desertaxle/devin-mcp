@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import respx
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ResourceError, ToolError
 
 from main import (
     DEVIN_API_BASE,
@@ -11,7 +11,9 @@ from main import (
     delegate,
     exponential_backoff,
     get_api_key,
+    get_playbook,
     get_session,
+    list_playbooks,
     list_sessions,
     resume_session,
 )
@@ -26,6 +28,11 @@ class TestGetApiKey:
         monkeypatch.delenv("DEVIN_API_KEY", raising=False)
         with pytest.raises(ToolError, match="DEVIN_API_KEY"):
             get_api_key()
+
+    def test_raises_custom_error_class(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+        with pytest.raises(ResourceError, match="DEVIN_API_KEY"):
+            get_api_key(ResourceError)
 
 
 class TestExponentialBackoff:
@@ -835,6 +842,133 @@ class TestResumeSession:
 
         with pytest.raises(ToolError, match="DEVIN_API_KEY"):
             await resume_session("sess_123", "Continue", progress=mock_progress)
+
+
+class TestListPlaybooks:
+    @pytest.fixture(autouse=True)
+    def set_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DEVIN_API_KEY", "apk_test123")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_returns_playbooks_json(self) -> None:
+        playbooks_data = [
+            {
+                "playbook_id": "play_1",
+                "title": "Deploy to staging",
+                "body": "Steps to deploy",
+                "status": "active",
+            },
+            {
+                "playbook_id": "play_2",
+                "title": "Run tests",
+                "body": "Steps to run tests",
+                "status": "active",
+            },
+        ]
+        respx.get(f"{DEVIN_API_BASE}/playbooks").respond(200, json=playbooks_data)
+
+        result = await list_playbooks()
+
+        import json
+
+        parsed = json.loads(result)
+        assert len(parsed) == 2
+        assert parsed[0]["playbook_id"] == "play_1"
+        assert parsed[1]["title"] == "Run tests"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_401_raises_resource_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/playbooks").respond(
+            401, json={"error": "Unauthorized"}
+        )
+
+        with pytest.raises(ResourceError, match="Invalid API key"):
+            await list_playbooks()
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_500_raises_resource_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/playbooks").respond(
+            500, text="Internal Server Error"
+        )
+
+        with pytest.raises(ResourceError, match="Devin API error.*500"):
+            await list_playbooks()
+
+    @pytest.mark.asyncio
+    async def test_api_key_missing_raises_resource_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+
+        with pytest.raises(ResourceError, match="DEVIN_API_KEY"):
+            await list_playbooks()
+
+
+class TestGetPlaybook:
+    @pytest.fixture(autouse=True)
+    def set_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DEVIN_API_KEY", "apk_test123")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_returns_playbook_json(self) -> None:
+        playbook_data = {
+            "playbook_id": "play_1",
+            "title": "Deploy to staging",
+            "body": "Steps to deploy",
+            "status": "active",
+        }
+        respx.get(f"{DEVIN_API_BASE}/playbooks/play_1").respond(200, json=playbook_data)
+
+        result = await get_playbook("play_1")
+
+        import json
+
+        parsed = json.loads(result)
+        assert parsed["playbook_id"] == "play_1"
+        assert parsed["title"] == "Deploy to staging"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_401_raises_resource_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/playbooks/play_1").respond(
+            401, json={"error": "Unauthorized"}
+        )
+
+        with pytest.raises(ResourceError, match="Invalid API key"):
+            await get_playbook("play_1")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_404_raises_resource_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/playbooks/play_1").respond(
+            404, json={"error": "Not found"}
+        )
+
+        with pytest.raises(ResourceError, match="not found"):
+            await get_playbook("play_1")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_500_raises_resource_error(self) -> None:
+        respx.get(f"{DEVIN_API_BASE}/playbooks/play_1").respond(
+            500, text="Internal Server Error"
+        )
+
+        with pytest.raises(ResourceError, match="Devin API error.*500"):
+            await get_playbook("play_1")
+
+    @pytest.mark.asyncio
+    async def test_api_key_missing_raises_resource_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEVIN_API_KEY", raising=False)
+
+        with pytest.raises(ResourceError, match="DEVIN_API_KEY"):
+            await get_playbook("play_1")
 
 
 class TestMain:
